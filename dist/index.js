@@ -1,47 +1,80 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-const server = new Server({
-    name: "react-ast-mcp",
-    version: "1.0.0"
-}, {
-    capabilities: {
-        tools: {}
-    }
-});
-// Реєструємо інструменти
-server.setRequestHandler(ListToolsRequestSchema, async () => {
+import { z } from "zod";
+import { Project, SyntaxKind, Node } from "ts-morph";
+import * as fs from "fs";
+import { object } from "zod/v4";
+const server = new McpServer({ name: "react-ast", version: "1.0.0" });
+const project = new Project({ compilerOptions: { jsx: 1 } });
+server.registerTool("ping", {
+    description: "Check if the server is running"
+}, async () => {
     return {
-        tools: [
+        content: [
             {
-                name: "ping",
-                description: "Тестовий інструмент для перевірки з'єднання",
-                inputSchema: {
-                    type: "object",
-                    properties: {}
-                }
+                type: "text",
+                text: "Server is running"
             }
         ]
     };
 });
-// Обробляємо виклики
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    if (request.params.name === "ping") {
+server.registerTool("analyze_component", {
+    description: "Analyzes React component and returns its AST structure (names and props)",
+    inputSchema: {
+        state: z.string()
+    }
+}, async ({ state }) => {
+    if (!fs.existsSync(state)) {
         return {
             content: [
                 {
                     type: "text",
-                    text: "Pong! MCP Server is alive and ready to parse AST."
+                    text: "File not found"
                 }
             ]
         };
     }
-    throw new Error(`Tool not found: ${request.params.name}`);
+    try {
+        const sourceFile = project.addSourceFileAtPath(state);
+        const result = { components: [] };
+        const varDecls = sourceFile.getDescendantsOfKind(SyntaxKind.VariableDeclaration);
+        for (const decl of varDecls) {
+            const init = decl.getInitializer();
+            if (init && Node.isArrowFunction(init)) {
+                const name = decl.getName();
+                if (/^[A-Z]/.test(name)) {
+                    const compInfo = { name };
+                    const params = init.getParameters();
+                    if (params.length) {
+                        compInfo.propsType = params[0]?.getType().getText(decl);
+                    }
+                    result.components.push(compInfo);
+                }
+            }
+        }
+        project.removeSourceFile(sourceFile);
+        return {
+            content: [
+                {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2)
+                }
+            ]
+        };
+    }
+    catch (error) {
+        return {
+            content: [{ type: "text", text: `Parsing error: ${error.message}` }]
+        };
+    }
 });
 async function main() {
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    console.error("React AST MCP Server running on stdio"); // Використовуємо console.error для логів, щоб не ламати stdio
+    console.error("React-AST MCP Server running on stdio");
 }
-main().catch(console.error);
+main().catch((error) => {
+    console.error("Fatal error in main(): ", error);
+    process.exit(1);
+});
 //# sourceMappingURL=index.js.map
