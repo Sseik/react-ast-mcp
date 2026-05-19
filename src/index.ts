@@ -55,7 +55,7 @@ server.registerTool(
       };
     }
     try {
-      const sourceFile = project.addSourceFileAtPath(state);
+      const sourceFile = project.addSourceFileAtPath(fileName);
       const result: ComponentsResponse = { components: [] };
 
       const varDecls = sourceFile.getDescendantsOfKind(
