@@ -3,7 +3,6 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Project, SyntaxKind, Node } from "ts-morph";
 import * as fs from "fs";
-import { object } from "zod/v4";
 
 const server = new McpServer({ name: "react-ast", version: "1.0.0" });
 
@@ -41,11 +40,11 @@ server.registerTool(
     description:
       "Analyzes React component and returns its AST structure (names and props)",
     inputSchema: {
-      state: z.string()
+      fileName: z.string()
     }
   },
-  async ({ state }) => {
-    if (!fs.existsSync(state)) {
+  async ({ fileName }) => {
+    if (!fs.existsSync(fileName)) {
       return {
         content: [
           {
