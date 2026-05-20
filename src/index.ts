@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { Project, SyntaxKind, Node } from "ts-morph";
+import { Project, SyntaxKind, Node, FileReference } from "ts-morph";
 import * as fs from "fs";
 
 const server = new McpServer({ name: "react-ast", version: "1.0.0" });
@@ -15,6 +15,18 @@ interface Component {
 
 interface ComponentsResponse {
   components: Component[];
+}
+
+interface Warning {
+  parentComponent: string;
+  propName: string;
+  issue: string;
+  suggestion: string;
+  line: number;
+}
+
+interface WarningsResponse {
+  warnings: Warning[];
 }
 
 server.registerTool(
@@ -92,6 +104,102 @@ server.registerTool(
     } catch (error: any) {
       return {
         content: [{ type: "text", text: `Parsing error: ${error.message}` }]
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "detect_unstable_props",
+  {
+    description:
+      "Analyzes JSX in a file to find inline objects or inline functions passed as props, which break React.memo reconciliation.",
+    inputSchema: {
+      filePath: z.string().describe("Absolute path to component's file")
+    }
+  },
+  async ({ filePath }) => {
+    if (!fs.existsSync(filePath)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "File not found"
+          }
+        ]
+      };
+    }
+
+    try {
+      const sourceFile = project.addSourceFileAtPath(filePath);
+      const result: WarningsResponse = { warnings: [] };
+
+      const jsxElements = [
+        ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+        ...sourceFile.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+      ];
+
+      for (const element of jsxElements) {
+        const componentName = element.getTagNameNode().getText();
+        if (!/^[A-Z]/.test(componentName)) continue;
+
+        const attributes = element.getAttributes();
+        for (const attribute of attributes) {
+          if (Node.isJsxAttribute(attribute)) {
+            const propName = attribute.getNameNode().getText();
+            const initializer = attribute.getInitializer();
+
+            if (initializer && Node.isJsxExpression(initializer)) {
+              const expression = initializer.getExpression();
+              if (!expression) continue;
+
+              let issueType = null;
+              if (Node.isObjectLiteralExpression(expression)) {
+                issueType = "Inline Object";
+              } else if (Node.isArrayLiteralExpression(expression)) {
+                issueType = "Inline Array";
+              } else if (
+                Node.isFunctionExpression(expression) ||
+                Node.isArrowFunction(expression)
+              ) {
+                issueType = "Inline Function";
+              }
+
+              if (issueType) {
+                result.warnings.push({
+                  parentComponent: componentName,
+                  propName: propName,
+                  issue: issueType,
+                  suggestion:
+                    issueType === "Inline Function"
+                      ? "Wrap in useCallback"
+                      : "Wrap in useMemo",
+                  line: attribute.getStartLineNumber()
+                });
+              }
+            }
+          }
+        }
+      }
+
+      project.removeSourceFile(sourceFile);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(result, null, 2)
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Parsing error: ${error.message}`
+          }
+        ]
       };
     }
   }
