@@ -10,6 +10,7 @@ const project = new Project({ compilerOptions: { jsx: 1 } });
 
 interface Component {
   name: string;
+  isMemoized: boolean;
   propsType?: string | undefined;
 }
 
@@ -50,9 +51,9 @@ server.registerTool(
   "analyze_component",
   {
     description:
-      "Analyzes React component and returns its AST structure (names and props)",
+      "Analyzes React component and returns its AST structure (names, props and memoization status)",
     inputSchema: {
-      fileName: z.string()
+      fileName: z.string().describe("Absolute path to the .tsx component file")
     }
   },
   async ({ fileName }) => {
@@ -74,18 +75,43 @@ server.registerTool(
         SyntaxKind.VariableDeclaration
       );
       for (const decl of varDecls) {
+        let isMemoized = false;
+        let componentFunctionNode: Node | undefined = undefined;
         const init = decl.getInitializer();
 
-        if (init && Node.isArrowFunction(init)) {
-          const name = decl.getName();
-          if (/^[A-Z]/.test(name)) {
-            const compInfo: Component = { name };
-            const params = init.getParameters();
+        if (!init) continue;
 
-            if (params.length) {
+        if (Node.isCallExpression(init)) {
+          const expression = init.getExpression();
+          const expressionText = expression.getText();
+
+          if (expressionText === "memo" || expressionText === "React.memo") {
+            isMemoized = true;
+            const args = init.getArguments();
+            if (args.length > 0 && Node.isArrowFunction(args[0])) {
+              componentFunctionNode = args[0];
+            }
+          }
+        } else if (Node.isArrowFunction(init)) {
+          componentFunctionNode = init;
+        }
+
+        if (
+          componentFunctionNode &&
+          Node.isArrowFunction(componentFunctionNode)
+        ) {
+          const name = decl.getName();
+
+          if (/^[A-Z]/.test(name)) {
+            const compInfo: Component = {
+              name,
+              isMemoized
+            };
+
+            const params = componentFunctionNode.getParameters();
+            if (params.length > 0) {
               compInfo.propsType = params[0]?.getType().getText(decl);
             }
-
             result.components.push(compInfo);
           }
         }
