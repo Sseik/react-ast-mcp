@@ -4,11 +4,20 @@ import React, { memo } from "react";
 export const UserCard = memo(({ user, onEdit }: any) => {
   return <div>{user.name}</div>;
 });
+const Avatar = () => <img src="avatar.png" alt="User" />;
+const UserProfile = () => (
+  <div>
+    <Avatar />
+  </div>
+);
+const Navigation = () => <nav>Menu</nav>;
 
 // Parent component breaking memoization
 export const Dashboard = () => {
   return (
     <div>
+      <Navigation />
+      <UserProfile />
       <UserCard
         user={{ name: "Alex", role: "Admin" }} // This is an inline object!
         users={["a", "b", "c"]} // This is an inline array!

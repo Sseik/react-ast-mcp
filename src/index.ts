@@ -53,7 +53,7 @@ server.registerTool(
     description:
       "Analyzes React component and returns its AST structure (names, props and memoization status)",
     inputSchema: {
-      fileName: z.string().describe("Absolute path to the .tsx component file")
+      fileName: z.string().describe("Absolute path to the component file")
     }
   },
   async ({ fileName }) => {
@@ -141,7 +141,7 @@ server.registerTool(
     description:
       "Analyzes JSX in a file to find inline objects or inline functions passed as props, which break React.memo reconciliation.",
     inputSchema: {
-      filePath: z.string().describe("Absolute path to component's file")
+      filePath: z.string().describe("Absolute path to component file")
     }
   },
   async ({ filePath }) => {
@@ -226,6 +226,110 @@ server.registerTool(
             text: `Parsing error: ${error.message}`
           }
         ]
+      };
+    }
+  }
+);
+
+server.registerTool(
+  "generate_component_tree",
+  {
+    description:
+      "Generates a Mermaid.js dependency graph of React components within a file (showing which component renders which).",
+    inputSchema: {
+      filePath: z.string().describe("Absolute path to component file")
+    }
+  },
+  async ({ filePath }) => {
+    if (!fs.existsSync(filePath)) {
+      return {
+        content: [{
+          type: "text",
+          text: "File not found"
+        }]
+      };
+    }
+
+    try {
+      const sourceFile = project.addSourceFileAtPath(filePath);
+      const mermaidLines = new Set<string>();
+      let hasComponents = false;
+
+      const extractJsxRelationships = (
+        parentName: string,
+        parentNode: Node
+      ) => {
+        const jsxElements = [
+          ...parentNode.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
+          ...parentNode.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement)
+        ];
+
+        for (const element of jsxElements) {
+          const name = element.getTagNameNode().getText();
+          if (/^[A-Z]/.test(name)) {
+            mermaidLines.add(`  ${parentName} --> ${name}`);
+            hasComponents = true;
+          }
+        }
+      };
+
+      // Check arrow functions
+      const varDecls = sourceFile.getDescendantsOfKind(
+        SyntaxKind.VariableDeclaration
+      );
+      for (const decl of varDecls) {
+        const init = decl.getInitializer();
+        const name = decl.getName();
+
+        if (name && /^[A-Z]/.test(name) && init) {
+          if (Node.isArrowFunction(init) || Node.isCallExpression(init)) {
+            extractJsxRelationships(name, init);
+          }
+        }
+      }
+
+      // Check standard function declarations
+      const funcDecls = sourceFile.getDescendantsOfKind(
+        SyntaxKind.FunctionDeclaration
+      );
+      for (const decl of funcDecls) {
+        const name = decl.getName();
+        if (name && /^[A-Z]/.test(name)) {
+          extractJsxRelationships(name, decl);
+        }
+      }
+
+      project.removeSourceFile(sourceFile);
+
+      if (!hasComponents || mermaidLines.size === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No component relationships found in this file."
+            }
+          ]
+        };
+      }
+
+      const mermaidGraph = [
+        "```mermaid",
+        "graph TD",
+        ...Array.from(mermaidLines),
+        "```"
+      ].join("\n");
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: mermaidGraph
+          }
+        ]
+      }
+    } catch (error: any) {
+      return {
+        content: [{ type: "text", text: `Parsing error: ${error.message}` }]
       };
     }
   }
