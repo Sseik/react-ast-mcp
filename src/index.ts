@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { Project, SyntaxKind, Node } from "ts-morph";
 import * as fs from "fs";
+import { toLowerCase } from "zod/v4";
 
 const server = new McpServer({ name: "react-ast", version: "1.0.0" });
 
@@ -453,20 +454,75 @@ server.registerTool(
 server.registerTool(
   "extract_ui_tokens",
   {
-    description: "",
+    description:
+      "Parses a CSS file to extract design system tokens (CSS variables). Helps the LLM use existing project colors and spacing.",
     inputSchema: {
-      filePath: z.string()
+      filePath: z
+        .string()
+        .describe("Absolute path to the .css file (main.css, global.css etc).")
     }
   },
   async ({ filePath }) => {
-    return {
-      content: [
-        {
-          type: "text",
-          text: ""
+    if (!fs.existsSync(filePath)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "CSS file not found"
+          }
+        ]
+      };
+    }
+    try {
+      const cssContent = fs.readFileSync(filePath, "utf-8");
+      const cssVarRegex = /(--[\w-]+)\s*:\s*([^;]+);/g;
+      const tokens: Record<string, string> = {};
+
+      let match;
+      while ((match = cssVarRegex.exec(cssContent)) !== null) {
+        const [, varName, varValue] = match;
+        if (varName) {
+          tokens[varName.trim()] = varValue?.trim() ?? "";
         }
-      ]
-    };
+      }
+
+      if (Object.keys(tokens).length === 0) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: "No css variables found in the specified file."
+            }
+          ]
+        };
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                message:
+                  "Use these tokens in UI styles to match the design system",
+                tokens
+              },
+              null,
+              2
+            )
+          }
+        ]
+      };
+    } catch (error: any) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Parsing error: ${error.message}`
+          }
+        ]
+      };
+    }
   }
 );
 
